@@ -13,20 +13,14 @@
 #define WIDTH 320
 #define HEIGHT 240
 
-const float minT = 2.60102e-12;
-
 // #define WIDTH 512
 // #define HEIGHT 512
 
-std::vector<float> interpolateSingleFloats(float from, float to, int numberOfSteps) {
-	std::vector<float> result;
-	float ratio = (to - from) / (numberOfSteps - 1);
-	result.push_back(from);
-	for (size_t i = 1; i < numberOfSteps; i++) {
-		result.push_back(result[i - 1] + ratio);
-	}
-	return result;
-}
+enum RenderOption { Wireframe, Rasterise, Raytrace } renderOption;
+
+bool orbiting = false;
+
+// const float minT = 2.60102e-12;
 
 void drawLine(DrawingWindow &window, CanvasPoint from, CanvasPoint to, Colour colour, std::vector<std::vector<float> > &depthBuffer) {
 	float xDiff = to.x - from.x;
@@ -173,20 +167,6 @@ void drawFilledTriangle(DrawingWindow &window, CanvasTriangle triangle, Colour c
 	}
 }
 
-void draw(DrawingWindow &window) {
-	window.clearPixels();
-	for (size_t y = 0; y < window.height; y++) {
-		for (size_t x = 0; x < window.width; x++) {
-			// float red = rand() % 256;
-			float red = 0.0;
-			float green = 0.0;
-			float blue = 0.0;
-			uint32_t colour = (255 << 24) + (int(red) << 16) + (int(green) << 8) + int(blue);
-			window.setPixelColour(x, y, colour);
-		}
-	}
-}
-
 int getColourIndexByName(std::vector<Colour> colourPalette, std::string colourName) {
 	for (int i = 0; i < colourPalette.size(); i++) {
 		if (colourPalette[i].name == colourName) {
@@ -198,8 +178,12 @@ int getColourIndexByName(std::vector<Colour> colourPalette, std::string colourNa
 
 void handleEvent(SDL_Event event, DrawingWindow &window, glm::vec3 &cameraPosition, glm::mat3 &cameraOrientation, bool &enableOrbit) {
 	if (event.type == SDL_KEYDOWN) {
-		if (event.key.keysym.sym == SDLK_o) {
-			enableOrbit = !enableOrbit;
+		if (event.key.keysym.sym == SDLK_1) { renderOption = Wireframe; }
+		else if (event.key.keysym.sym == SDLK_2) { renderOption = Rasterise; }
+		else if (event.key.keysym.sym == SDLK_3) { renderOption = Raytrace; }
+		else if (event.key.keysym.sym == SDLK_o) { enableOrbit = !enableOrbit; }
+		else if (event.key.keysym.sym == SDLK_c) {
+			std::cout << "Camera Position: " << "(" << cameraPosition.x << ", " << cameraPosition.y << ", " << cameraPosition.z << ")" << std::endl;
 		}
 		else if (event.key.keysym.sym == SDLK_LEFT) {
 			cameraPosition.x -= 1;
@@ -223,20 +207,6 @@ void handleEvent(SDL_Event event, DrawingWindow &window, glm::vec3 &cameraPositi
 			std::cout << "DOWN" << std::endl;
 			std::cout << cameraPosition.x << " " << cameraPosition.y << " " << cameraPosition.z << std::endl;
 		}			
-		else if (event.key.keysym.sym == SDLK_u) {
-			CanvasPoint v0(rand() % WIDTH, rand() % HEIGHT);
-			CanvasPoint v1(rand() % WIDTH, rand() % HEIGHT);
-			CanvasPoint v2(rand() % WIDTH, rand() % HEIGHT);
-			
-			CanvasTriangle triangle(v0, v1, v2);
-
-			Colour colour(rand() % 256, rand() % 256, rand() % 256);
-			std::vector<std::vector<float> > depthBuffer(WIDTH, std::vector<float> (HEIGHT, 0));
-
-			drawFilledTriangle(window, triangle, colour, depthBuffer);
-
-			std::cout << "DRAW FILLED TRIANGLE" << std::endl;
-		}
 	} 
 	else if (event.type == SDL_MOUSEBUTTONDOWN) {
 		window.savePPM("output.ppm");
@@ -356,6 +326,31 @@ glm::mat3 lookAt(glm::vec3 from, glm::vec3 to) {
 	return cameraOrientation;
 }
 
+void drawWireframedScene(DrawingWindow &window, std::vector<ModelTriangle> modelTriangles, glm::vec3 cameraPosition, glm::mat3 cameraOrientation, std::vector<std::vector<float> > &depthBuffer) {
+	window.clearPixels();
+	clearDepthBuffer(depthBuffer);
+
+	CanvasPoint v0;
+	CanvasPoint v1;
+	CanvasPoint v2;
+
+	// TODO make a copy of modelTriangles[i]
+	for (int i = 0; i < modelTriangles.size(); i++) {
+		for (int j = 0; j < modelTriangles[i].vertices.size(); j++) {
+			glm::vec3 cameraToVertex = modelTriangles[i].vertices[j] - cameraPosition;
+			glm::vec3 adjustedVector = cameraToVertex * cameraOrientation;
+			modelTriangles[i].vertices[j] = adjustedVector + cameraPosition; // - cameraPosition
+		}
+
+		v0 = getCanvasIntersectionPoint(cameraPosition, modelTriangles[i].vertices[0], 2);
+		v1 = getCanvasIntersectionPoint(cameraPosition, modelTriangles[i].vertices[1], 2);
+		v2 = getCanvasIntersectionPoint(cameraPosition, modelTriangles[i].vertices[2], 2);
+
+		CanvasTriangle triangle(v0, v1, v2);
+		drawStrokedTriangle(window, triangle, modelTriangles[i].colour, depthBuffer);
+	}
+}
+
 void drawRasterizedScene(DrawingWindow &window, std::vector<ModelTriangle> modelTriangles, glm::vec3 cameraPosition, glm::mat3 cameraOrientation, std::vector<std::vector<float> > &depthBuffer) {
 	window.clearPixels();
 	clearDepthBuffer(depthBuffer);
@@ -364,6 +359,7 @@ void drawRasterizedScene(DrawingWindow &window, std::vector<ModelTriangle> model
 	CanvasPoint v1;
 	CanvasPoint v2;
 
+	// TODO make a copy of modelTriangles[i]
 	for (int i = 0; i < modelTriangles.size(); i++) {
 		for (int j = 0; j < modelTriangles[i].vertices.size(); j++) {
 			glm::vec3 cameraToVertex = modelTriangles[i].vertices[j] - cameraPosition;
@@ -385,40 +381,43 @@ bool validIntersection(float t, float u, float v) {
 }
 
 glm::vec3 getIntersectionPoint(ModelTriangle triangle, float u, float v) {
-	glm::vec3 intersectionPoint;
-	intersectionPoint = triangle.vertices[0] + u * (triangle.vertices[1] - triangle.vertices[0]) + v * (triangle.vertices[2] - triangle.vertices[0]);
+	glm::vec3 intersectionPoint = triangle.vertices[0] + u * (triangle.vertices[1] - triangle.vertices[0]) + v * (triangle.vertices[2] - triangle.vertices[0]);
 	return intersectionPoint; // Maybe origin + intersectionPoint???
 }
 
+ModelTriangle adjustModelTriangleWRTCameraOrientation(ModelTriangle triangle, glm::vec3 cameraPosition, glm::mat3 cameraOrientation) {
+	ModelTriangle adjustedTriangle = triangle;
+	for (int i = 0; i < adjustedTriangle.vertices.size(); i++) {
+		glm::vec3 cameraToVertex = adjustedTriangle.vertices[i] - cameraPosition;
+		glm::vec3 adjustedVector = cameraToVertex * cameraOrientation;
+		adjustedTriangle.vertices[i] = adjustedVector + cameraPosition; 
+	}
+	return adjustedTriangle;
+}
+
+glm::vec3 getRayTriangleIntersection(ModelTriangle triangle, glm::vec3 cameraPosition, glm::vec3 rayDirection) {
+	glm::vec3 e0 = triangle.vertices[1] - triangle.vertices[0];
+	glm::vec3 e1 = triangle.vertices[2] - triangle.vertices[0];
+	glm::vec3 SPVector = cameraPosition - triangle.vertices[0];
+	glm::mat3 DEMatrix(-rayDirection, e0, e1);
+	glm::vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
+	return possibleSolution;
+}
+
+
 RayTriangleIntersection getClosestIntersection(glm::vec3 cameraPosition, glm::vec3 rayDirection, std::vector<ModelTriangle> modelTriangles, glm::mat3 cameraOrientation, bool shadowRay) {
 	RayTriangleIntersection rayTriangleIntersection;
-
 	rayTriangleIntersection.distanceFromCamera = std::numeric_limits<float>::max();
 
-
 	for (int i = 0; i < modelTriangles.size(); i++) {
-		
-		// adjust triangle to rotation perspective - for orbiting
 		ModelTriangle triangle = modelTriangles[i];
-
-		// if (! shadowRay) {
-		// 	for (int j = 0; j < triangle.vertices.size(); j++) {
-		// 		glm::vec3 cameraToVertex = triangle.vertices[j] - cameraPosition;
-		// 		glm::vec3 adjustedVector = cameraToVertex * cameraOrientation;
-		// 		triangle.vertices[j] = adjustedVector + cameraPosition; // - cameraPosition
-		// 	}
-		// }
-
-		glm::vec3 e0 = triangle.vertices[1] - triangle.vertices[0];
-		glm::vec3 e1 = triangle.vertices[2] - triangle.vertices[0];
-		glm::vec3 SPVector = cameraPosition - triangle.vertices[0];
-		glm::mat3 DEMatrix(-rayDirection, e0, e1);
-		glm::vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
-
+		if (! shadowRay) {
+			triangle = adjustModelTriangleWRTCameraOrientation(triangle, cameraPosition, cameraOrientation);
+		}
+		glm::vec3 possibleSolution = getRayTriangleIntersection(triangle, cameraPosition, rayDirection);
 		float t = possibleSolution.x;
 		float u = possibleSolution.y;
 		float v = possibleSolution.z;
-
 		if (validIntersection(t, u, v) && t > 0.002) { // Change t > 0.01 ! // 0.0018
 			if (t < rayTriangleIntersection.distanceFromCamera) {
 				rayTriangleIntersection.distanceFromCamera = t;
@@ -441,14 +440,14 @@ void drawRayTracedScene(DrawingWindow &window, std::vector<ModelTriangle> modelT
 			rayDirection.x = (2 * ((x + 0.5) / window.width) - 1) * imageAspectRatio; 
 			rayDirection.y = (1 - 2 * ((y + 0.5) / window.height)); 
 
-			// std::cout << rayDirection.x << " " << rayDirection.y << " " << rayDirection.z << std::endl;
-
 			// Make it look bigger
 			rayDirection.x /= 3.0;
 			rayDirection.y /= 3.0;
 
 			rayDirection = glm::normalize(rayDirection); // Should I? TODO: Problem when zooming in and out!
 			RayTriangleIntersection rayTriangleIntersection = getClosestIntersection(cameraPosition, rayDirection, modelTriangles, cameraOrientation, false);
+
+			// We hit something
 			if (rayTriangleIntersection.distanceFromCamera != std::numeric_limits<float>::max()) {
 				glm::vec3 newCameraPosition = rayTriangleIntersection.intersectionPoint;
 				glm::mat3 newCameraOrientation = lookAt(newCameraPosition, lightPosition);
@@ -456,10 +455,6 @@ void drawRayTracedScene(DrawingWindow &window, std::vector<ModelTriangle> modelT
 				glm::normalize(newRayDirection); // Should I? TODO: Problem when zooming in and out!
 
 				float distanceToLightPosition = glm::distance(lightPosition, newCameraPosition);
-				// if (distanceToLightPosition < minDistance) {
-				// 	std::cout << "d -> l = " << distanceToLightPosition << std::endl;
-				// 	minDistance = distanceToLightPosition;
-				// }
 				RayTriangleIntersection newRayTriangleIntersection = getClosestIntersection(newCameraPosition, newRayDirection, modelTriangles, newCameraOrientation, true);
 
 				// Light can't be seen
@@ -474,7 +469,6 @@ void drawRayTracedScene(DrawingWindow &window, std::vector<ModelTriangle> modelT
 			}
 		}
 	}
-	// std::cout << "minDistance=" << minDistance << std::endl;
 }
 
 // Rotate camera about X axis with a given rotation angle
@@ -526,11 +520,11 @@ int main(int argc, char *argv[]) {
 	// glm::vec3 column2 = glm::vec3(0.0, -0.7, 0.7);
 	// glm::mat3 n = glm::mat3(column0, column1, column2); 
 
-	glm::mat3 rotationDefault = glm::mat3(
-		1.0, 0.0, 0.0,
-		0.0, 0.0, 1.0,
-		0.0, 1.0, 0.0
-	);
+	// glm::mat3 rotationDefault = glm::mat3(
+	// 	1.0, 0.0, 0.0,
+	// 	0.0, 0.0, 1.0,
+	// 	0.0, 1.0, 0.0
+	// );
 
 	// cameraOrientation = rotationDefault * cameraOrientation;
 
@@ -573,8 +567,11 @@ int main(int argc, char *argv[]) {
 	while (true) {
 		// We MUST poll for events - otherwise the window will freeze !
 		if (window.pollForInputEvents(event)) handleEvent(event, window, cameraPosition, cameraOrientation, enableOrbit);
-		drawRayTracedScene(window, modelTriangles, cameraPosition, rayDirection, cameraOrientation, lightPosition);
-		// drawRasterizedScene(window, modelTriangles, cameraPosition, cameraOrientation, depthBuffer);
+		switch (renderOption) {
+			case Wireframe: drawWireframedScene(window, modelTriangles, cameraPosition, cameraOrientation, depthBuffer); break;
+			case Rasterise: drawRasterizedScene(window, modelTriangles, cameraPosition, cameraOrientation, depthBuffer); break;
+			case Raytrace: drawRayTracedScene(window, modelTriangles, cameraPosition, rayDirection, cameraOrientation, lightPosition); break;
+		}
 
 		// if (upDown) {
 		// 	lightPosition.y += 0.005;
