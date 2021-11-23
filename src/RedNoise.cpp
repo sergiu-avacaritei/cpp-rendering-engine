@@ -186,6 +186,8 @@ void handleEvent(SDL_Event event, DrawingWindow &window, glm::vec3 &cameraPositi
 		else if (event.key.keysym.sym == SDLK_l) { lightPosition.y -= 0.05; }
 		else if (event.key.keysym.sym == SDLK_i) { lightPosition.x += 0.05; }
 		else if (event.key.keysym.sym == SDLK_j) { lightPosition.x -= 0.05; }
+		else if (event.key.keysym.sym == SDLK_u) { lightPosition.z -= 0.05; }
+		else if (event.key.keysym.sym == SDLK_h) { lightPosition.z += 0.05; }
 		else if (event.key.keysym.sym == SDLK_c) {
 			std::cout << "Camera Position: " << "(" << cameraPosition.x << ", " << cameraPosition.y << ", " << cameraPosition.z << ")" << std::endl;
 			std::cout << "Light Position: " << "(" << lightPosition.x << ", " << lightPosition.y << ", " << lightPosition.z << ")" << std::endl;
@@ -435,10 +437,15 @@ RayTriangleIntersection getClosestIntersection(glm::vec3 cameraPosition, glm::ve
 	return rayTriangleIntersection;
 }
 
+glm::vec3 calculateTriangleNormal(ModelTriangle triangle) {
+	glm::vec3 triangleNormal = glm::cross(triangle.vertices[1] - triangle.vertices[0], triangle.vertices[2] - triangle.vertices[0]);
+	return triangleNormal;
+}
+
 float maxDistanceToLightPosition = -1.0;
 float minDistanceToLightPosition = std::numeric_limits<float>::max();
 
-float lightRange = 1.2;
+float lightRange = 1.0;
 
 void drawRayTracedScene(DrawingWindow &window, std::vector<ModelTriangle> modelTriangles, glm::vec3 cameraPosition, glm::vec3 rayDirection, glm::mat3 cameraOrientation, glm::vec3 lightPosition) {
 	window.clearPixels();
@@ -488,8 +495,20 @@ void drawRayTracedScene(DrawingWindow &window, std::vector<ModelTriangle> modelT
 						if (lightIntensity > 1.0) {
 							lightIntensity = 1.0;
 						}
+						assert(lightIntensity >= 0.0 && lightIntensity <= 1.0);
+						// Calculate normal vector
+						rayTriangleIntersection.intersectedTriangle.normal = calculateTriangleNormal(rayTriangleIntersection.intersectedTriangle);
+						rayTriangleIntersection.intersectedTriangle.normal = glm::normalize(rayTriangleIntersection.intersectedTriangle.normal);
+						glm::vec3 lightDirection = lightPosition - rayTriangleIntersection.intersectionPoint; // Or lightPosition - newCameraPosition
+						lightDirection = glm::normalize(lightDirection);
+						float angleOfIncidence = glm::dot(rayTriangleIntersection.intersectedTriangle.normal, lightDirection);
+						if (angleOfIncidence < 0.0) {
+							angleOfIncidence = 0.0;
+						}
+						assert(angleOfIncidence >= 0.0 && angleOfIncidence <= 1.0);
+						// std::cout << angleOfIncidence << std::endl;
 						Colour RGBColour = rayTriangleIntersection.intersectedTriangle.colour;
-						uint32_t colour = (255 << 24) + (int(RGBColour.red * lightIntensity) << 16) + (int(RGBColour.green * lightIntensity) << 8) + int(RGBColour.blue * lightIntensity);
+						uint32_t colour = (255 << 24) + (int(RGBColour.red * lightIntensity * angleOfIncidence) << 16) + (int(RGBColour.green * lightIntensity * angleOfIncidence) << 8) + int(RGBColour.blue * lightIntensity * angleOfIncidence);
 						window.setPixelColour(x, y, colour);
 					}
 				}
