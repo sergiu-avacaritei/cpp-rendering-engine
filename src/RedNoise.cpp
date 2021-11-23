@@ -176,14 +176,19 @@ int getColourIndexByName(std::vector<Colour> colourPalette, std::string colourNa
 	return -1;
 }
 
-void handleEvent(SDL_Event event, DrawingWindow &window, glm::vec3 &cameraPosition, glm::mat3 &cameraOrientation, bool &enableOrbit) {
+void handleEvent(SDL_Event event, DrawingWindow &window, glm::vec3 &cameraPosition, glm::mat3 &cameraOrientation, bool &enableOrbit, glm::vec3 &lightPosition) {
 	if (event.type == SDL_KEYDOWN) {
 		if (event.key.keysym.sym == SDLK_1) { renderOption = Wireframe; }
 		else if (event.key.keysym.sym == SDLK_2) { renderOption = Rasterise; }
 		else if (event.key.keysym.sym == SDLK_3) { renderOption = Raytrace; }
 		else if (event.key.keysym.sym == SDLK_o) { enableOrbit = !enableOrbit; }
+		else if (event.key.keysym.sym == SDLK_p) { lightPosition.y += 0.05; }
+		else if (event.key.keysym.sym == SDLK_l) { lightPosition.y -= 0.05; }
+		else if (event.key.keysym.sym == SDLK_i) { lightPosition.x += 0.05; }
+		else if (event.key.keysym.sym == SDLK_j) { lightPosition.x -= 0.05; }
 		else if (event.key.keysym.sym == SDLK_c) {
 			std::cout << "Camera Position: " << "(" << cameraPosition.x << ", " << cameraPosition.y << ", " << cameraPosition.z << ")" << std::endl;
+			std::cout << "Light Position: " << "(" << lightPosition.x << ", " << lightPosition.y << ", " << lightPosition.z << ")" << std::endl;
 		}
 		else if (event.key.keysym.sym == SDLK_LEFT) {
 			cameraPosition.x -= 1;
@@ -411,9 +416,9 @@ RayTriangleIntersection getClosestIntersection(glm::vec3 cameraPosition, glm::ve
 
 	for (int i = 0; i < modelTriangles.size(); i++) {
 		ModelTriangle triangle = modelTriangles[i];
-		if (! shadowRay) {
-			triangle = adjustModelTriangleWRTCameraOrientation(triangle, cameraPosition, cameraOrientation);
-		}
+		// if (! shadowRay) {
+		// 	triangle = adjustModelTriangleWRTCameraOrientation(triangle, cameraPosition, cameraOrientation);
+		// }
 		glm::vec3 possibleSolution = getRayTriangleIntersection(triangle, cameraPosition, rayDirection);
 		float t = possibleSolution.x;
 		float u = possibleSolution.y;
@@ -430,21 +435,28 @@ RayTriangleIntersection getClosestIntersection(glm::vec3 cameraPosition, glm::ve
 	return rayTriangleIntersection;
 }
 
+float maxDistanceToLightPosition = -1.0;
+float minDistanceToLightPosition = std::numeric_limits<float>::max();
+
+float lightRange = 1.2;
+
 void drawRayTracedScene(DrawingWindow &window, std::vector<ModelTriangle> modelTriangles, glm::vec3 cameraPosition, glm::vec3 rayDirection, glm::mat3 cameraOrientation, glm::vec3 lightPosition) {
 	window.clearPixels();
 
-	float imageAspectRatio = window.width / (float)window.height; // assuming width > height 
+	float imageAspectRatio = window.width / (float)window.height; // Assuming width > height 
 	// float minDistance = std::numeric_limits<float>::max();
 	for (size_t y = 0; y < window.height; y++) {
 		for (size_t x = 0; x < window.width; x++) {
 			rayDirection.x = (2 * ((x + 0.5) / window.width) - 1) * imageAspectRatio; 
 			rayDirection.y = (1 - 2 * ((y + 0.5) / window.height)); 
 
-			// Make it look bigger
+			// Make it look bigger 
 			rayDirection.x /= 3.0;
 			rayDirection.y /= 3.0;
 
-			rayDirection = glm::normalize(rayDirection); // Should I? TODO: Problem when zooming in and out!
+			rayDirection = glm::normalize(rayDirection); // TODO: Problem when zooming in and out!
+
+			// Fire a ray from the main camera into the scene and get the closest ray/triangle intersection (if it exists)
 			RayTriangleIntersection rayTriangleIntersection = getClosestIntersection(cameraPosition, rayDirection, modelTriangles, cameraOrientation, false);
 
 			// We hit something
@@ -452,9 +464,14 @@ void drawRayTracedScene(DrawingWindow &window, std::vector<ModelTriangle> modelT
 				glm::vec3 newCameraPosition = rayTriangleIntersection.intersectionPoint;
 				glm::mat3 newCameraOrientation = lookAt(newCameraPosition, lightPosition);
 				glm::vec3 newRayDirection = lightPosition - newCameraPosition; // ?
-				glm::normalize(newRayDirection); // Should I? TODO: Problem when zooming in and out!
+				glm::normalize(newRayDirection); // TODO: Problem when zooming in and out!
 
 				float distanceToLightPosition = glm::distance(lightPosition, newCameraPosition);
+
+				maxDistanceToLightPosition = std::max(maxDistanceToLightPosition, distanceToLightPosition); // 1.05489
+				minDistanceToLightPosition = std::min(minDistanceToLightPosition, distanceToLightPosition); // 0.115694
+
+				// Fire a ray from the object to the light source and check if it hits it (i.e. Can the object see the light?)
 				RayTriangleIntersection newRayTriangleIntersection = getClosestIntersection(newCameraPosition, newRayDirection, modelTriangles, newCameraOrientation, true);
 
 				// Light can't be seen
@@ -462,13 +479,25 @@ void drawRayTracedScene(DrawingWindow &window, std::vector<ModelTriangle> modelT
 					// window.setPixelColour(x, y, 0);
 				} 
 				else {
-					Colour RGBColour = rayTriangleIntersection.intersectedTriangle.colour;
-					uint32_t colour = (255 << 24) + (int(RGBColour.red) << 16) + (int(RGBColour.green) << 8) + int(RGBColour.blue);
-					window.setPixelColour(x, y, colour);
+					// Light can't reach that surface area
+					if (distanceToLightPosition > lightRange) {
+
+					}
+					else {
+						float lightIntensity =  1.0 / (4.0 * M_PI * (distanceToLightPosition / lightRange) * (distanceToLightPosition / lightRange)); // S / 4*pi*r^2, S = light source strength
+						if (lightIntensity > 1.0) {
+							lightIntensity = 1.0;
+						}
+						Colour RGBColour = rayTriangleIntersection.intersectedTriangle.colour;
+						uint32_t colour = (255 << 24) + (int(RGBColour.red * lightIntensity) << 16) + (int(RGBColour.green * lightIntensity) << 8) + int(RGBColour.blue * lightIntensity);
+						window.setPixelColour(x, y, colour);
+					}
 				}
 			}
 		}
 	}
+	// std::cout << maxDistanceToLightPosition << std::endl;
+	// std::cout << minDistanceToLightPosition << std::endl;
 }
 
 // Rotate camera about X axis with a given rotation angle
@@ -506,6 +535,7 @@ int main(int argc, char *argv[]) {
 	parseOBJFile(objFilename, colourPalette, modelTriangles);
 
 	glm::vec3 cameraPosition(0.0, 0.0, 2.0); // Try (0.0, 0.0, 4.0) for rasterising
+	// Camera Position: (1.99731, 0, 0.10346) // See yellow wall
 	glm::vec3 rayDirection(0.0, 0.0, -1.0);
 	glm::vec3 lightPosition(0.0, 0.35, 0.0);
 
@@ -566,7 +596,7 @@ int main(int argc, char *argv[]) {
 
 	while (true) {
 		// We MUST poll for events - otherwise the window will freeze !
-		if (window.pollForInputEvents(event)) handleEvent(event, window, cameraPosition, cameraOrientation, enableOrbit);
+		if (window.pollForInputEvents(event)) handleEvent(event, window, cameraPosition, cameraOrientation, enableOrbit, lightPosition);
 		switch (renderOption) {
 			case Wireframe: drawWireframedScene(window, modelTriangles, cameraPosition, cameraOrientation, depthBuffer); break;
 			case Rasterise: drawRasterizedScene(window, modelTriangles, cameraPosition, cameraOrientation, depthBuffer); break;
